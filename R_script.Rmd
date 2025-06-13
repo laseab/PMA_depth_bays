@@ -1,0 +1,1439 @@
+---
+title: "figure_stats_codes"
+author: "Songjun & Laura"
+date: "2025-06-10"
+output: html_document
+---
+
+```{r load package}
+library(tidyverse)
+library(gridExtra)
+library(ggplot2)
+library(reshape2)
+library(ggrepel)
+library(vegan)
+library(viridis)
+library(cowplot)
+library(phyloseq)
+library(ANCOMBC)
+library(data.table)
+library(ggpubr)
+library(naniar)
+library(SRS)
+library(ggpicrust2)
+library(phyloseq)
+library(ggpubr)
+
+library(rstatix)
+
+#many different colours
+library(RColorBrewer)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+
+
+```
+
+
+#load bacteria data
+
+```{r load data}
+PMA_BA_meta_data<- read.csv("bacteria/Bacteria_meta_data_long_format_for_R_updated.csv", sep=",")
+
+PMA_BA_feature_table <- read_tsv("bacteria/ASV_table.tsv")
+
+
+PMA_BA_taxonomy <- read_tsv("bacteria/ASV_tax.gtdb.tsv")
+#replace NA to 'unidentified'
+PMA_BA_taxonomy[is.na(PMA_BA_taxonomy)]<-"unidentified"
+
+PMA_BA_meta_data$ID <- as.character(PMA_BA_meta_data$ID)
+#remove two NA sites B22-24
+PMA_BA_meta_data<-PMA_BA_meta_data[-23,]
+PMA_BA_meta_data<-PMA_BA_meta_data[-23,]
+PMA_BA_meta_data$depth<-factor(PMA_BA_meta_data$depth,levels = c("22-24cm","15-17cm","8-10cm","5-6cm","1-2cm","0-1cm"))
+colnames(PMA_BA_meta_data)[8]<-"Treatment"
+ 
+
+PMA_BA_counts <- read.table("bacteria//ASV_table.tsv", stringsAsFactors = F, header =T)%>%
+
+          gather(sample,count, 2:ncol(.))%>%
+
+          dplyr::rename(ID = sample)
+
+#Get rid of unnecessBAy chBAacter, so it will be easier to combines samples later
+
+PMA_BA_counts$ID <- gsub('\\w+_(.*)_\\w+', '\\1', PMA_BA_counts$ID)
+
+
+#PMA_BA_feature_table<-as.data.frame(PMA_BA_feature_table)
+
+PMA_BA_feature_table %>%
+  pivot_longer(!ASV_ID, names_to = "ID", values_to = "count")->PMA_BA_feature_table_long
+
+PMA_BA_feature_table_long$ID <- gsub('\\w+_(.*)_\\w+', '\\1', PMA_BA_feature_table_long$ID)
+
+PMA_BA_feature_table_long %>%
+  pivot_wider(names_from = ID, values_from = count)->PMA_BA_feature_table
+
+
+
+```
+
+```{r generate asvs table}
+asvs_PMA_bacteria<-PMA_BA_feature_table%>%
+  gather(ID, count, 2:ncol(.)) %>% 
+  filter(count > 0) %>%
+  group_by(ID) %>% 
+  mutate(relab = count/sum(count)) %>% 
+  filter(n() > 10) %>% 
+  ungroup()
+
+```
+
+#load archaea data
+
+```{r load data}
+PMA_AR_meta_data<- read.csv("files_archaea/Archaea_meta_data_long_format_for_R_updated.csv", sep=",")
+
+
+PMA_AR_feature_table <- read_tsv("files_archaea/ASV_table.tsv")
+
+
+PMA_AR_taxonomy <- read_tsv("files_archaea/ASV_tax.sbdi-gtdb.tsv")
+#replace NA to 'unidentified'
+PMA_AR_taxonomy[is.na(PMA_AR_taxonomy)]<-"unidentified"
+
+PMA_AR_meta_data$ID <- as.character(PMA_AR_meta_data$ID)
+#remove two NA sites B22-24
+PMA_AR_meta_data<-PMA_AR_meta_data[-23,]
+PMA_AR_meta_data<-PMA_AR_meta_data[-23,]
+PMA_AR_meta_data$depth<-factor(PMA_AR_meta_data$depth,levels = c("22-24cm","15-17cm","8-10cm","5-6cm","1-2cm","0-1cm"))
+colnames(PMA_AR_meta_data)[7]<-"Treatment"
+
+
+PMA_AR_counts <- read.table("files_archaea/ASV_table.tsv", stringsAsFactors = F, header =T)%>%
+
+          gather(sample,count, 2:ncol(.))%>%
+
+          dplyr::rename(ID = sample)
+
+#Get rid of unnecessary character, so it will be easier to combines samples later
+
+PMA_AR_counts$ID <- gsub('\\w+_(.*)_\\w+', '\\1', PMA_AR_counts$ID)
+
+
+#PMA_AR_feature_table<-as.data.frame(PMA_AR_feature_table)
+
+PMA_AR_feature_table %>%
+  pivot_longer(!ASV_ID, names_to = "ID", values_to = "count")->PMA_AR_feature_table_long
+
+PMA_AR_feature_table_long$ID <- gsub('\\w+_(.*)_\\w+', '\\1', PMA_AR_feature_table_long$ID)
+
+PMA_AR_feature_table_long %>%
+  pivot_wider(names_from = ID, values_from = count)->PMA_AR_feature_table
+
+
+
+```
+
+```{r generate asvs table}
+asvs_PMA_archaea<-PMA_AR_feature_table%>%
+  gather(ID, count, 2:ncol(.)) %>% 
+  filter(count > 0) %>%
+  group_by(ID) %>% 
+  mutate(relab = count/sum(count)) %>% 
+  filter(n() > 10) %>% 
+  ungroup()
+
+```
+
+
+#Figure2 cell abundance
+
+#bacteria
+```{r}
+
+bac_fig2<-  PMA_BA_meta_data%>%
+    group_by(bay, depth, Treatment)%>%
+    mutate(sd=sd(Gene.copy.number.per.g.sediment.dry.weight))%>%
+    mutate(mean=mean(Gene.copy.number.per.g.sediment.dry.weight))%>%
+    ungroup()%>%
+  ggplot(aes(x=mean, y=depth, group=Treatment, fill=Treatment))+
+  scale_fill_manual(values=c("#a89b8c","#aa4465"))+
+      geom_bar(stat="identity",color="black", 
+           position=position_dodge(), width=.9) +
+        geom_errorbar(aes(y=depth, x=mean,xmin=mean-sd, xmax=mean+sd), width=.9, color="grey25", position = position_dodge()
+                )+
+  theme_classic()+
+  #xlim(0,5e+8)+
+  ggtitle("PMA Bacteria")+
+    theme(axis.text.x = element_text(angle =90, vjust = 0.5, hjust=1),
+        legend.position="bottom")+
+    facet_wrap(~bay, nrow=2)+
+       xlab("Gene copy number/g sediment dry weight") + ylab("Depth (cm)")
+
+
+bac_fig2
+
+
+
+
+
+```
+
+#archaea
+```{r}
+
+arc_fig2<-  PMA_AR_meta_data%>%
+    group_by(bay, depth, Treatment)%>%
+    mutate(sd=sd(Gene.copy.number.per.g.sediment.dry.weight.archaea))%>%
+    mutate(mean=mean(Gene.copy.number.per.g.sediment.dry.weight.archaea))%>%
+    ungroup()%>%
+  ggplot(aes(x=mean, y=depth, group=Treatment, fill=Treatment))+
+  scale_fill_manual(values=c("#a89b8c","#aa4465"))+
+      geom_bar(stat="identity",color="black", 
+           position=position_dodge(), width=.9) +
+        geom_errorbar(aes(y=depth, x=mean,xmin=mean-sd, xmax=mean+sd), width=.9, color="grey25", position = position_dodge()
+                )+
+  theme_classic()+
+  #xlim(0,5e+8)+
+  ggtitle("PMA Archaea")+
+    theme(axis.text.x = element_text(angle =90, vjust = 0.5, hjust=1),
+        legend.position="bottom")+
+    facet_wrap(~bay, nrow=2)+
+       xlab("Gene copy number/g sediment dry weight") + ylab("Depth (cm)")
+
+
+arc_fig2
+
+
+```
+
+#mix pma + no pma and bacteria+archaea for mean and sd at each depth/bay
+```{r}
+
+PMA_AR_meta_selected<-PMA_AR_meta_data[,c("ID","sample","bay","site","depth","Treatment","Gene.copy.number.per.g.sediment.dry.weight.archaea")]
+
+PMA_BA_meta_selected<-PMA_BA_meta_data[,c("ID","sample","bay","site","depth","Treatment","Gene.copy.number.per.g.sediment.dry.weight")]
+colnames(PMA_BA_meta_selected)[7]<-"Gene.copy.number.per.g.sediment.dry.weight.bacteria"
+
+PMA_meta_selected_mixed<-PMA_AR_meta_selected%>%
+  inner_join(PMA_BA_meta_selected)%>%
+  mutate(gene_copy_mixed=Gene.copy.number.per.g.sediment.dry.weight.archaea+Gene.copy.number.per.g.sediment.dry.weight.bacteria)
+
+
+fig2_c<-  PMA_meta_selected_mixed%>%
+    group_by(bay, depth)%>%
+    mutate(sd=sd(gene_copy_mixed))%>%
+    mutate(mean=mean(gene_copy_mixed))%>%
+    ungroup()%>%
+  ggplot(aes(x=mean, y=depth))+
+  #scale_fill_manual(values=c("#a89b8c","#aa4465"))+
+      geom_bar(stat="identity",color="black", 
+           position=position_dodge(), width=.9) +
+        geom_errorbar(aes(y=depth, x=mean,xmin=mean-sd, xmax=mean+sd), width=.9, color="grey25", position = position_dodge()
+                )+
+  theme_classic()+
+  #xlim(0,5e+8)+
+  ggtitle("PMA + NO PMA & bacteria +archaea")+
+    theme(axis.text.x = element_text(angle =90, vjust = 0.5, hjust=1),
+        legend.position="bottom")+
+    facet_wrap(~bay, nrow=2)+
+       xlab("Gene copy number/g sediment dry weight") + ylab("Depth (cm)")
+
+fig2_c
+
+```
+
+#mix together for figure2
+```{r}
+
+PMA_figure2<- ggarrange(bac_fig2,arc_fig2,fig2_c,
+          labels = c("A", "B","C"), 
+  font.label = list(size = 18),
+  ncol  = 3,
+  common.legend = TRUE,
+  legend = "bottom")
+
+
+
+```
+
+#statistics cell numbers
+```{r}
+
+library(rstatix)
+
+#data normal distributed?
+shapiro.test(PMA_BA_meta_data$Gene.copy.number.per.g.sediment.dry.weight)#not normally distributed
+shapiro.test(PMA_AR_meta_data$Gene.copy.number.per.g.sediment.dry.weight.archaea)#not normally distributed
+
+#so use Wilcox test
+
+
+#test cell abundance between bays
+#bacteria
+PMA_BA_meta_data%>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight ~ bay)
+
+#archaea
+PMA_AR_meta_data%>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight.archaea ~ bay)
+
+
+#test PMA vs no PMA
+#use the paired= TRUE method so it will only compare PMA VS no PMA under same sample ()
+
+#bacteria
+PMA_BA_meta_data%>%
+  group_by(bay) %>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight ~ Treatment, paired = TRUE)
+
+PMA_BA_meta_data%>%
+  group_by(bay) %>%
+  wilcox_effsize(Gene.copy.number.per.g.sediment.dry.weight ~ Treatment, paired = TRUE)
+
+#each depth
+PMA_BA_meta_data%>%
+  group_by(bay, depth) %>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight ~ Treatment, paired = TRUE)
+
+
+
+#archaea
+PMA_AR_meta_data%>%
+  group_by(bay) %>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight.archaea ~ Treatment, paired = TRUE)
+
+PMA_AR_meta_data%>%
+  group_by(bay) %>%
+  wilcox_effsize(Gene.copy.number.per.g.sediment.dry.weight.archaea ~ Treatment, paired = TRUE)
+
+#each depth
+PMA_AR_meta_data%>%
+  group_by(bay,depth) %>%
+  wilcox_test(Gene.copy.number.per.g.sediment.dry.weight.archaea ~ Treatment, paired = TRUE)
+
+
+
+#mix all data together compare between bays.
+
+PMA_AR_meta_selected<-PMA_AR_meta_data[,c("ID","sample","bay","site","depth","Treatment","Gene.copy.number.per.g.sediment.dry.weight.archaea")]
+
+PMA_BA_meta_selected<-PMA_BA_meta_data[,c("ID","sample","bay","site","depth","Treatment","Gene.copy.number.per.g.sediment.dry.weight")]
+colnames(PMA_BA_meta_selected)[7]<-"Gene.copy.number.per.g.sediment.dry.weight.bacteria"
+
+PMA_meta_selected_mixed<-PMA_AR_meta_selected%>%
+  inner_join(PMA_BA_meta_selected)%>%
+  mutate(gene_copy_mixed=Gene.copy.number.per.g.sediment.dry.weight.archaea+Gene.copy.number.per.g.sediment.dry.weight.bacteria)
+
+PMA_meta_selected_mixed%>%
+  wilcox_test(gene_copy_mixed ~ bay)
+
+PMA_meta_selected_mixed%>%
+  group_by(bay, depth)%>%
+  wilcox_test(gene_copy_mixed ~ Treatment)
+
+PMA_meta_selected_mixed%>%
+  group_by(depth)%>%
+  wilcox_test(gene_copy_mixed ~ bay)
+
+
+```
+
+
+#Figure 3 code 
+```{r}
+
+#archaea
+dev_arc<-asvs_PMA_archaea[,1:3]%>% 
+ inner_join(PMA_AR_meta_data, by = 'ID')%>%
+  inner_join(PMA_AR_taxonomy, by = 'ASV_ID')%>%
+  mutate(sample_PMA = paste(sample, Treatment, sep = "_"))%>%
+  group_by(sample_PMA)%>%
+  # Calculate the relative abundance of each phylum in each site
+  mutate(relab = count/sum(count))%>%
+  ungroup()%>% 
+  filter(Kingdom == "Archaea")%>%
+  mutate(relab_count= relab *Gene.copy.number.per.g.sediment.dry.weight.archaea)
+
+dev_arc$depth <- factor(dev_arc$depth,levels=c("22-24cm","15-17cm","8-10cm","5-6cm","1-2cm","0-1cm")) 
+
+#top20
+dev_arc1 <-dev_arc %>%
+  group_by(bay, depth, Treatment)%>%
+  #filter(dev_relab > 0.01)%>%
+  arrange(desc(relab_count))%>%
+  top_n(20)%>%
+  ungroup()
+
+#rest be supplement maybe?
+dev_arc2 <- dev_arc %>% anti_join(dev_arc1, by=c("ASV_ID","bay","Treatment","depth"))%>% 
+  mutate(Family="zzz_Others")
+dev_tot <- rbind(dev_arc1,dev_arc2)  
+
+
+#modify figure table
+dev_arc1_figure_table<-dev_arc1%>%
+  group_by(bay, depth, Treatment, Family)%>%
+  summarise(cell_ab=sum(relab_count))
+
+
+dev_arc1_figure_table$Family <- gsub("ANME-1", "C.Methanophagales/ANME-1", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("BA1", "Bathyarchaeota/BA1", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("JACRNV01", "Myxococcota/JACRNV01", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("SG8-5", "C.Proteinplasmatales/SG8-5", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("SpSt-1190", "Nanoarchaeota/SpSt-1190", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("TCS64", "C.Bathyarchaeota/TCS64", dev_arc1_figure_table$Family)
+dev_arc1_figure_table$Family <- gsub("UBA233", "C.Bathyarchaeota/UBA233", dev_arc1_figure_table$Family)
+ 
+colnames(dev_arc1_figure_table)[4]<-"Family (Archaea)"
+
+fig3_1 <-dev_arc1_figure_table%>% 
+ggplot(aes(x = depth, y = cell_ab, fill = `Family (Archaea)`)) +
+  geom_bar(stat="identity")+
+   scale_fill_manual(values=c("#d34276","#d54d30","#c18942","#cfd15a","#628b44",
+"#75d754","#69d4b0","#698bcd","#7b59d8","#bb75b6","#ca47c1","gray76"))+
+coord_flip() +
+theme(
+    legend.position = 'bottom'
+  )+
+  xlab('depth') + ylab('gene copy numbers g/dry weight') +
+   theme_classic()+
+  guides(fill = guide_legend(ncol = 2)) +
+  theme(
+    legend.position = 'bottom',
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.text = element_text(size = 10)
+  )+
+   facet_wrap(~bay+Treatment)
+
+
+fig3_1
+
+
+
+#bacteria
+dev_bac<-asvs_PMA_bacteria[,1:3]%>% 
+ inner_join(PMA_BA_meta_data, by = 'ID')%>%
+  inner_join(PMA_BA_taxonomy, by = 'ASV_ID')%>%
+  mutate(sample_PMA = paste(sample, Treatment, sep = "_"))%>%
+  group_by(sample_PMA)%>%
+  # Calculate the relative abundance of each phylum in each site
+  mutate(relab = count/sum(count))%>%
+  ungroup()%>% 
+  filter(Kingdom == "Bacteria")%>%
+  mutate(relab_count= relab *Gene.copy.number.per.g.sediment.dry.weight)
+
+dev_bac$depth <- factor(dev_bac$depth,levels=c("22-24cm","15-17cm","8-10cm","5-6cm","1-2cm","0-1cm")) 
+str(dev_bac)
+
+#top10
+dev_bac1 <-dev_bac %>%
+   group_by(bay, depth, Treatment)%>%
+  #filter(dev_relab > 0.01)%>%
+  arrange(desc(relab_count))%>%
+  top_n(10)%>%
+  ungroup()
+
+
+#modify figure table
+dev_bac1_figure_table<-dev_bac1%>%
+  group_by(bay, depth, Treatment, Family)%>%
+  summarise(cell_ab=sum(relab_count))
+
+
+dev_bac1_figure_table$Family <- gsub("34-128", "Atribacterota/34-128", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("E26-bin7", "Anaerolineae/E26-bin7", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("E44-bin32", "Anaerolineae/E44-bin32", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("JAAEKA01", "Anaerolineae/JAAEKA01", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("JAFDCJ01", "Desulfobacterales/JAFDCJ01", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("JAHEKZ01", "Chromatiales/JAHEKZ01", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("RBG-16-66-30", "Aminicenantales/RBG-16-66-30", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("SM1-73", "Zixibacteria/SM1-73", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("SM23-28-2", "Chloroflexota/SM23-28-2", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("UBA11574", "Desulfobacterales/UBA11574", dev_bac1_figure_table$Family)
+dev_bac1_figure_table$Family <- gsub("UBA1163", "Desulfobacterales/UBA1163", dev_bac1_figure_table$Family)
+
+
+colnames(dev_bac1_figure_table)[4]<-"Family (Bacteria)"
+ 
+
+fig3_2 <-dev_bac1_figure_table%>% 
+ggplot(aes(x = depth, y = cell_ab, fill = `Family (Bacteria)`)) +
+  geom_bar(stat="identity")+
+    #scale_fill_manual(values=c("#cb0063","#fc1810","#b35300","#ffd18b","#ffc542","#413600","#b29e00","#c6d600","#daffa6","#01735d","#c8fff0","#00bfab","#002a27","#8bc1ff","#0088dc","#004fd5","#150026","#e18bff","#49005f","#e428e1","#ff2db9","#ffdced","#6f0039","gray76"))+
+  scale_fill_manual(values=col_vector)+
+coord_flip() +
+theme(
+    legend.position = 'bottom'
+  )+
+  xlab('depth') + ylab('gene copy numbers g/dry weight') +
+   theme_classic()+
+    guides(fill = guide_legend(ncol = 3)) +
+  theme(
+    legend.position = 'bottom',
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.text = element_text(size = 10)
+  )+
+   facet_wrap(~bay+Treatment)
+
+
+fig3_2
+
+
+PMA_figure3<-ggarrange(fig3_2, fig3_1, 
+          labels = c("A", "B"), 
+  font.label = list(size = 18),
+  align = "hv",
+  ncol  = 2,
+  legend="bottom" )
+
+
+```
+
+#ANCOMBC and Figure4 code
+
+#ANCOMBC archaea 
+```{r}
+asv_wide_ar<-PMA_AR_feature_table%>% 
+  remove_rownames() %>% 
+  column_to_rownames(var = "ASV_ID")
+
+OTU= otu_table(asv_wide_ar, taxa_are_rows = TRUE)
+
+ASV_tax_df<-as.data.frame(PMA_AR_taxonomy[,1:9])
+rownames(ASV_tax_df)<-NULL
+TAX = tax_table(as.matrix(ASV_tax_df %>% column_to_rownames(., var="ASV_ID")))
+row.names(PMA_AR_meta_data)<-NULL
+SAM = sample_data(PMA_AR_meta_data%>% column_to_rownames(var="ID"))
+
+ps <- phyloseq(OTU, TAX, SAM)
+
+ps@sam_data[["group"]] <- paste(ps@sam_data[["bay"]], ps@sam_data[["depth"]], sep="_")
+
+#phylum level
+ancombc2_PMA_archaea_phylum<-ancombc2(data = ps, tax_level = "Phylum", fix_formula = "group", group="group", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+#family level
+ancombc2_PMA_archaea_family<-ancombc2(data = ps, tax_level = "Family", fix_formula = "group", group="group", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+
+#seperate samdata into control/warm for two dunnet results
+SAM_control<-SAM[SAM$bay=="control",]
+SAM_heated<-SAM[SAM$bay=="heated",]
+
+ps_control <- phyloseq(OTU, TAX, SAM_control)
+ps_heated<-phyloseq(OTU, TAX, SAM_heated)
+
+
+#family level
+ancombc2_PMA_archaea_family_control<-ancombc2(data = ps_control, tax_level = "Family", fix_formula = "depth", group="depth", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+ancombc2_PMA_archaea_family_heated<-ancombc2(data = ps_heated, tax_level = "Family", fix_formula = "depth", group="depth", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+
+PMA_archaea_family_control_dunnest<-ancombc2_PMA_archaea_family_control$res_dunn
+PMA_archaea_family_heated_dunnest<-ancombc2_PMA_archaea_family_heated$res_dunn
+
+
+
+```
+
+#heatmap archaea
+```{r}
+
+p<- asvs_PMA_archaea%>%
+  inner_join(PMA_AR_taxonomy, by="ASV_ID")%>%
+  group_by(Family, ID)%>%
+  summarise(relab=sum(relab))%>%
+  summarise(mean_relab=sum(relab))%>%
+  ungroup()%>%
+  filter(!is.na(Family))%>%
+  top_n(15,mean_relab)
+
+
+
+#control archaea part
+
+#try to add a new column top 15 taxon/family
+
+colnames(PMA_archaea_family_control_dunnest)[1]<-"Family"
+
+PMA_archaea_family_control_dunnest[,1:6] %>%
+   left_join(
+    p%>%
+      transmute(Family, top_15_Family=Family),
+    by="Family"
+  )%>%
+  replace_na(list("top_15_Family"="Other_Family"))->PMA_archaea_family_control_dunnest_wide
+
+
+PMA_archaea_family_control_dunnest_wide %>%
+  pivot_longer(!c(Family,top_15_Family), names_to = "group", values_to = "lfc_value")->PMA_archaea_family_control_dunnest_long
+
+#replace group name
+PMA_archaea_family_control_dunnest_long$group[PMA_archaea_family_control_dunnest_long$group == 'lfc_depth1-2cm'] <- '1-2cm'
+PMA_archaea_family_control_dunnest_long$group[PMA_archaea_family_control_dunnest_long$group == 'lfc_depth5-6cm'] <- '5-6cm'
+PMA_archaea_family_control_dunnest_long$group[PMA_archaea_family_control_dunnest_long$group == 'lfc_depth8-10cm'] <- '8-10cm'
+PMA_archaea_family_control_dunnest_long$group[PMA_archaea_family_control_dunnest_long$group == 'lfc_depth15-17cm'] <- '15-17cm'
+PMA_archaea_family_control_dunnest_long$group[PMA_archaea_family_control_dunnest_long$group == 'lfc_depth22-24cm'] <- '22-24cm'
+
+#organize order
+PMA_archaea_family_control_dunnest_long$group<- factor(PMA_archaea_family_control_dunnest_long$group,levels=c("1-2cm","5-6cm","8-10cm","15-17cm","22-24cm"))
+ 
+ 
+lo = floor(min(PMA_archaea_family_control_dunnest_long$lfc_value))
+up = ceiling(max(PMA_archaea_family_control_dunnest_long$lfc_value))
+mid = 0#(lo + up)/2
+
+heatmap_archaea_control_top15_family<-PMA_archaea_family_control_dunnest_long%>%
+  ggplot(aes(x = top_15_Family, y = group, fill = lfc_value)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white",
+                       na.value = "white", midpoint = mid, limit = c(-6,6),
+                       name = NULL) +
+  labs(x = NULL, y = NULL)+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle("Archaea control bay surface compared to depth")+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size =12))+
+scale_y_discrete(limits = rev)
+
+
+heatmap_archaea_control_top15_family
+
+#ggsave("heatmap_archaea_control_top15_family.pdf",plot=heatmap_archaea_control_top15_family, width = 40, height = 20,units = "cm")
+
+
+
+#heated part
+
+#try to add a new column top 15 taxon/family
+
+colnames(PMA_archaea_family_heated_dunnest)[1]<-"Family"
+
+PMA_archaea_family_heated_dunnest[,1:6] %>%
+   left_join(
+    p%>%
+      transmute(Family, top_15_Family=Family),
+    by="Family"
+  )%>%
+  replace_na(list("top_15_Family"="Other_Family"))->PMA_archaea_family_heated_dunnest_wide
+
+
+PMA_archaea_family_heated_dunnest_wide %>%
+  pivot_longer(!c(Family,top_15_Family), names_to = "group", values_to = "lfc_value")->PMA_archaea_family_heated_dunnest_long
+
+#replace group name
+PMA_archaea_family_heated_dunnest_long$group[PMA_archaea_family_heated_dunnest_long$group == 'lfc_depth1-2cm'] <- '1-2cm'
+PMA_archaea_family_heated_dunnest_long$group[PMA_archaea_family_heated_dunnest_long$group == 'lfc_depth5-6cm'] <- '5-6cm'
+PMA_archaea_family_heated_dunnest_long$group[PMA_archaea_family_heated_dunnest_long$group == 'lfc_depth8-10cm'] <- '8-10cm'
+PMA_archaea_family_heated_dunnest_long$group[PMA_archaea_family_heated_dunnest_long$group == 'lfc_depth15-17cm'] <- '15-17cm'
+PMA_archaea_family_heated_dunnest_long$group[PMA_archaea_family_heated_dunnest_long$group == 'lfc_depth22-24cm'] <- '22-24cm'
+
+#organize order
+PMA_archaea_family_heated_dunnest_long$group<- factor(PMA_archaea_family_heated_dunnest_long$group,levels=c("1-2cm","5-6cm","8-10cm","15-17cm","22-24cm"))
+ 
+ 
+lo = floor(min(PMA_archaea_family_heated_dunnest_long$lfc_value))
+up = ceiling(max(PMA_archaea_family_heated_dunnest_long$lfc_value))
+mid = 0#(lo + up)/2
+
+heatmap_archaea_heated_top15_family<-PMA_archaea_family_heated_dunnest_long%>%
+  ggplot(aes(x = top_15_Family, y = group, fill = lfc_value)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white",
+                       na.value = "white", midpoint = mid, limit = c(-6,6),
+                       name = NULL) +
+  labs(x = NULL, y = NULL)+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle("Archaea heated bay surface compared to depth")+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size =12))+
+scale_y_discrete(limits = rev)
+
+heatmap_archaea_heated_top15_family
+
+#ggsave("heatmap_archaea_heated_top15_family.pdf",plot=heatmap_archaea_heated_top15_family, width = 40, height = 20,units = "cm")
+
+
+
+
+```
+
+#ANCOMBC bacteria
+```{r}
+asv_wide_ba<-PMA_BA_feature_table%>% 
+  remove_rownames() %>% 
+  column_to_rownames(var = "ASV_ID")
+
+OTU= otu_table(asv_wide_ba, taxa_are_rows = TRUE)
+
+ASV_tax_df<-as.data.frame(PMA_BA_taxonomy[,1:9])
+rownames(ASV_tax_df)<-NULL
+TAX = tax_table(as.matrix(ASV_tax_df %>% column_to_rownames(., var="ASV_ID")))
+row.names(PMA_BA_meta_data)<-NULL
+SAM = sample_data(PMA_BA_meta_data%>% column_to_rownames(var="ID"))
+
+ps <- phyloseq(OTU, TAX, SAM)
+
+
+#seperate samdata into control/warm for two dunnet results
+SAM_control<-SAM[SAM$bay=="control",]
+SAM_heated<-SAM[SAM$bay=="heated",]
+
+ps_control <- phyloseq(OTU, TAX, SAM_control)
+ps_heated<-phyloseq(OTU, TAX, SAM_heated)
+
+
+#family level
+ancombc2_PMA_bacteria_family_control<-ancombc2(data = ps_control, tax_level = "Family", fix_formula = "depth", group="depth", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+ancombc2_PMA_bacteria_family_heated<-ancombc2(data = ps_heated, tax_level = "Family", fix_formula = "depth", group="depth", rand_formula=NULL, p_adj_method = "holm", n_cl = 4, prv_cut = 0.10, struc_zero=TRUE, neg_lb=TRUE, global=TRUE, pairwise=TRUE, dunnet=TRUE)
+
+
+PMA_bacteria_family_control_dunnest<-ancombc2_PMA_bacteria_family_control$res_dunn
+PMA_bacteria_family_heated_dunnest<-ancombc2_PMA_bacteria_family_heated$res_dunn
+
+#write.csv(PMA_bacteria_family_control_dunnest, file = "~/PMA_bacteria_family_dunnest_control.csv")
+#write.csv(PMA_bacteria_family_heated_dunnest, file = "~/PMA_bacteria_family_dunnest_heated.csv")
+
+
+
+```
+
+#heatmap bacteria
+```{r}
+
+p<- asvs_PMA_bacteria%>%
+  inner_join(PMA_BA_taxonomy, by="ASV_ID")%>%
+  group_by(Family, ID)%>%
+  summarise(relab=sum(relab))%>%
+  summarise(mean_relab=sum(relab))%>%
+  ungroup()%>%
+  filter(!is.na(Family))%>%
+  top_n(15,mean_relab)
+
+
+
+#control bacteria part
+
+#try to add a new column top 15 taxon/family
+
+colnames(PMA_bacteria_family_control_dunnest)[1]<-"Family"
+
+PMA_bacteria_family_control_dunnest[,1:6] %>%
+   left_join(
+    p%>%
+      transmute(Family, top_15_Family=Family),
+    by="Family"
+  )%>%
+  replace_na(list("top_15_Family"="Other_Family"))->PMA_bacteria_family_control_dunnest_wide
+
+
+PMA_bacteria_family_control_dunnest_wide %>%
+  pivot_longer(!c(Family,top_15_Family), names_to = "group", values_to = "lfc_value")->PMA_bacteria_family_control_dunnest_long
+
+#replace group name
+PMA_bacteria_family_control_dunnest_long$group[PMA_bacteria_family_control_dunnest_long$group == 'lfc_depth1-2cm'] <- '1-2cm'
+PMA_bacteria_family_control_dunnest_long$group[PMA_bacteria_family_control_dunnest_long$group == 'lfc_depth5-6cm'] <- '5-6cm'
+PMA_bacteria_family_control_dunnest_long$group[PMA_bacteria_family_control_dunnest_long$group == 'lfc_depth8-10cm'] <- '8-10cm'
+PMA_bacteria_family_control_dunnest_long$group[PMA_bacteria_family_control_dunnest_long$group == 'lfc_depth15-17cm'] <- '15-17cm'
+PMA_bacteria_family_control_dunnest_long$group[PMA_bacteria_family_control_dunnest_long$group == 'lfc_depth22-24cm'] <- '22-24cm'
+
+#organize order
+PMA_bacteria_family_control_dunnest_long$group<- factor(PMA_bacteria_family_control_dunnest_long$group,levels=c("1-2cm","5-6cm","8-10cm","15-17cm","22-24cm"))
+ 
+ 
+lo = floor(min(PMA_bacteria_family_control_dunnest_long$lfc_value))
+up = ceiling(max(PMA_bacteria_family_control_dunnest_long$lfc_value))
+mid = 0#(lo + up)/2
+
+heatmap_bacteria_control_top15_family<-PMA_bacteria_family_control_dunnest_long%>%
+  ggplot(aes(x = top_15_Family, y = group, fill = lfc_value)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white",
+                       na.value = "white", midpoint = mid, limit = c(-6,6),
+                       name = NULL) +
+  labs(x = NULL, y = NULL)+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle("Bacteria control bay surface compared to depth")+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size =12))+
+scale_y_discrete(limits = rev)
+
+
+heatmap_bacteria_control_top15_family
+
+#ggsave("heatmap_bacteria_control_top15_family.pdf",plot=heatmap_bacteria_control_top15_family, width = 40, height = 20,units = "cm")
+
+
+
+#heated part
+
+#try to add a new column top 15 taxon/family
+
+colnames(PMA_bacteria_family_heated_dunnest)[1]<-"Family"
+
+PMA_bacteria_family_heated_dunnest[,1:6] %>%
+   left_join(
+    p%>%
+      transmute(Family, top_15_Family=Family),
+    by="Family"
+  )%>%
+  replace_na(list("top_15_Family"="Other_Family"))->PMA_bacteria_family_heated_dunnest_wide
+
+
+PMA_bacteria_family_heated_dunnest_wide %>%
+  pivot_longer(!c(Family,top_15_Family), names_to = "group", values_to = "lfc_value")->PMA_bacteria_family_heated_dunnest_long
+
+#replace group name
+PMA_bacteria_family_heated_dunnest_long$group[PMA_bacteria_family_heated_dunnest_long$group == 'lfc_depth1-2cm'] <- '1-2cm'
+PMA_bacteria_family_heated_dunnest_long$group[PMA_bacteria_family_heated_dunnest_long$group == 'lfc_depth5-6cm'] <- '5-6cm'
+PMA_bacteria_family_heated_dunnest_long$group[PMA_bacteria_family_heated_dunnest_long$group == 'lfc_depth8-10cm'] <- '8-10cm'
+PMA_bacteria_family_heated_dunnest_long$group[PMA_bacteria_family_heated_dunnest_long$group == 'lfc_depth15-17cm'] <- '15-17cm'
+PMA_bacteria_family_heated_dunnest_long$group[PMA_bacteria_family_heated_dunnest_long$group == 'lfc_depth22-24cm'] <- '22-24cm'
+
+#organize order
+PMA_bacteria_family_heated_dunnest_long$group<- factor(PMA_bacteria_family_heated_dunnest_long$group,levels=c("1-2cm","5-6cm","8-10cm","15-17cm","22-24cm"))
+ 
+ 
+lo = floor(min(PMA_bacteria_family_heated_dunnest_long$lfc_value))
+up = ceiling(max(PMA_bacteria_family_heated_dunnest_long$lfc_value))
+mid = 0#(lo + up)/2
+
+heatmap_bacteria_heated_top15_family<-PMA_bacteria_family_heated_dunnest_long%>%
+  ggplot(aes(x = top_15_Family, y = group, fill = lfc_value)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white",
+                       na.value = "white", midpoint = mid, limit = c(-6,6),
+                       name = NULL) +
+  labs(x = NULL, y = NULL)+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle("Bacteria heated bay surface compared to depth")+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size =12))+
+scale_y_discrete(limits = rev)
+
+heatmap_bacteria_heated_top15_family
+
+#ggsave("heatmap_bacteria_heated_top15_family.pdf",plot=heatmap_bacteria_heated_top15_family, width = 40, height = 20,units = "cm")
+
+
+
+
+```
+
+#mix as Figure 4
+```{r}
+
+
+PMA_heatmap_mix<-ggarrange(heatmap_archaea_heated_top15_family,
+          heatmap_bacteria_heated_top15_family,
+          heatmap_archaea_control_top15_family,
+          heatmap_bacteria_control_top15_family,
+                    labels = c("A", "B","C","D"),
+                    font.label = list(size = 18),
+                    common.legend = TRUE, legend = "right",
+                    ncol=2, nrow=2)
+PMA_heatmap_mix
+
+PMA_heatmap_mix <- annotate_figure(
+  PMA_heatmap_mix,
+  left = text_grob("Depth interval", rot = 90, vjust = 1, size = 14)
+)
+
+PMA_heatmap_mix
+
+```
+
+#picrust analysis & Figure 5
+
+```{r Differential abundance analysis - Heated bay - Archaea - ANCOMBC2}
+
+#Make phyloseq object, read more: https://codeocean.com/capsule/0588632/tree/v1
+
+meta_ancom <- metadata.heat %>% dplyr::select(sample_ID, bay, depth)%>%filter(sample_ID %in% c("P29893_1001_S1", "P29893_1002_S2", "P29893_1003_S3", "P29893_1004_S4", "P29893_1005_S5", "P29893_1006_S6", "P29893_1007_S7", "P29893_1008_S8", "P29893_1009_S9", "P29893_1010_S10", "P29893_1011_S11", "P29893_1012_S12", "P29893_1013_S13", "P29893_1014_S14", "P29893_1015_S15", "P29893_1016_S16", "P29893_1017_S17", "P29893_1018_S18", "P29893_1019_S19","P29893_1020_S20" ,"P29893_1021_S21","P29893_1022_S22", "P29893_1023_S23", "P29893_1024_S24", "P29893_1025_S25", "P29893_1026_S26", "P29893_1027_S27", "P29893_1028_S28", "P29893_1029_S29", "P29893_1030_S30", "P29893_1031_S31", "P29893_1032_S32", "P29893_1033_S33", "P29893_1034_S34", "P29893_1083_S83", "P29893_1084_S84", "P29893_1085_S85", "P29893_1086_S86", "P29893_1087_S87", "P29893_1088_S88", "P29893_1089_S89", "P29893_1090_S90", "P29893_1091_S91", "P29893_1092_S92", "P29893_1093_S93", "P29893_1094_S94"))%>% remove_rownames() %>% 
+  column_to_rownames(var = "sample_ID")
+
+# ANCOM-BC2 (SS Filter)
+OTU=otu_table(strat_table_arch, taxa_are_rows = TRUE)
+META = sample_data(meta_ancom)
+phyl_obj <- phyloseq(OTU, META)
+
+sample_data(phyl_obj)$depth <- as.factor(sample_data(phyl_obj)$depth)
+sample_data(phyl_obj)$depth<- relevel(sample_data(phyl_obj)$depth, "0-1cm")
+
+output = ancombc2(data = phyl_obj, assay_name = "relab",
+                  fix_formula = "depth", rand_formula = NULL,
+                  p_adj_method = "holm", pseudo_sens = TRUE,
+                  prv_cut = 0.10, lib_cut = 1000, s0_perc = 0.05,
+                  group = "depth", struc_zero = TRUE, neg_lb = TRUE,
+                  alpha = 0.05, n_cl = 2, verbose = TRUE,
+                  global = TRUE, pairwise = TRUE, 
+                  dunnet = TRUE, trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, 
+                                      verbose = TRUE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = lme4::lmerControl(), 
+                  mdfdr_control =  list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+                                       node = list(2),
+                                       solver = "ECOS",
+                                       B = 10))
+
+res_table <- as.data.frame(output$res)
+#write.csv(res_table, "ANCOMBC2_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_pair = as.data.frame(output$res_pair)
+#write.csv(res_pair, "ANCOMBC2_res_pair_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_global = as.data.frame(output$res_global)
+#write.csv(res_global, "ANCOMBC2_res_global_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_dunn = as.data.frame(output$res_dunn)
+write.csv(res_dunn, "ANCOMBC2_res_dunn_output_heated_bay_Archaea_.csv")
+
+```
+
+```{r ANCOM-BC2 multiple pairwise comparisons against a pre-specified group (Dunnett’s type of test) - Heated bay - Archaea - ANCOMBC2}
+res_dunn <- read.csv("ANCOMBC2_res_dunn_output_heated_bay_Archaea_.csv",stringsAsFactors = FALSE, header=TRUE)
+
+
+#Figure for DUNN - multiple comparison
+df_fig_dunn = as.data.frame(res_dunn) %>%
+    dplyr::filter(`diff_depth1.2cm`== 1 | 
+                    `diff_depth5.6cm` == 1 |
+                   `diff_depth8.10cm` == 1 | 
+                    `diff_depth15.17cm` == 1|
+                    `diff_depth22.24cm` == 1) %>%
+    mutate(`lfc_depth1-2cm` = ifelse(`diff_depth1.2cm` == 1, 
+                             `lfc_depth1.2cm`, 0),
+           `lfc_depth5-6cm` = ifelse(`diff_depth5.6cm` == 1, 
+                                   `lfc_depth5.6cm`, 0),
+           `lfc_depth8-10cm` = ifelse(`diff_depth8.10cm` == 1, 
+                                   `lfc_depth8.10cm`, 0),
+           `lfc_depth15-17cm` = ifelse(`diff_depth15.17cm` == 1, 
+                                   `lfc_depth15.17cm`, 0),
+           `lfc_depth22-24cm` = ifelse(`diff_depth22.24cm` == 1, 
+                                   `lfc_depth22.24cm`, 0)) %>%
+    transmute(taxon, 
+              `1-2cm vs. 0-1cm` = round(`lfc_depth1-2cm`, 2), 
+              `5-6cm vs. 0-1cm` = round(`lfc_depth5-6cm`, 2),
+              `8-10cm vs. 0-1cm` = round(`lfc_depth8-10cm`, 2),
+              `15-17cm vs. 0-1cm` = round(`lfc_depth15-17cm`, 2),
+              `22-24cm vs. 0-1cm` = round(`lfc_depth22-24cm`, 2) )%>%
+    pivot_longer(cols = `1-2cm vs. 0-1cm`:`5-6cm vs. 0-1cm`:`8-10cm vs. 0-1cm`:`15-17cm vs. 0-1cm`:`22-24cm vs. 0-1cm`, 
+                 names_to = "group", values_to = "value") %>%
+    arrange(taxon)
+
+df_fig_dunn$group<- factor(df_fig_dunn$group,levels=c("1-2cm vs. 0-1cm",
+                    "5-6cm vs. 0-1cm" ,
+                   "8-10cm vs. 0-1cm",
+                    "15-17cm vs. 0-1cm",
+                   "22-24cm vs. 0-1cm"))
+  
+#Filter 0 Values
+#df_fig_dunn <-df_fig_dunn %>% filter(!value == "0")
+
+#Rename taxon to KO
+df_fig_dunn <- df_fig_dunn%>%dplyr::rename(KO = taxon) 
+
+#Upload KO groups
+
+KO_tab<-  read.delim("../Master_student_shahinez/ko00001_ed.txt")
+df_fig_dunn <- df_fig_dunn %>% inner_join( KO_tab, by="KO", relationship = "many-to-many")
+df_fig_dunn$gene= str_split_fixed(df_fig_dunn$gene_info,";",2)[,1]
+
+df_fig_dunn_sub <- df_fig_dunn %>% filter(Highest %in% "09100 Metabolism") %>% filter(Secondhighest %in% "09102 Energy metabolism")%>%filter(!Thirdhighest %in% c("00190 Oxidative phosphorylation [PATH:ko00190]", "00710 Carbon fixation in photosynthetic organisms [PATH:ko00710]", "00720 Carbon fixation pathways in prokaryotes [PATH:ko00720]","00195 Photosynthesis [PATH:ko00195]","00196 Photosynthesis - antenna proteins [PATH:ko00196]" ))
+
+df_fig_dunn_sub$group<- factor(df_fig_dunn_sub$group,levels=c("22-24cm vs. 0-1cm", "15-17cm vs. 0-1cm", "8-10cm vs. 0-1cm","5-6cm vs. 0-1cm" ,
+"1-2cm vs. 0-1cm"))
+
+df_fig_dunn_sub$gene <- factor(df_fig_dunn_sub$gene, levels=c("acs","apgM", "cofC","cofD","cofE","cofH","fbiC","fwdA, fmdA","fwdB, fmdB","fwdD, fmdD","fwdF, fmdF", "fmdE","glyA", "K01622" ,"K16306", 
+"mtrA","mtrH","mttC","pmoA-amoA","pmoB-amoB","pmoC-amoC", "serA" ,"serB" ,"cdhB", "cdhC","cdhD, acsD","cdhE, acsC", "fae-hps" ,"fdoG, fdhF, fdwA","hps-phi" ,"mer" ,"mfnA, adc" ,
+"mvhA, vhuA, vhcA", "mvhG, vhuG, vhcG" ,"ppc" ,"mdh" ,
+
+"cysC", "cysH", "cysK", "cysQ","sat" ,"sir" ,"sqr" ,
+
+"nirK",
+
+"eno","glnA" ,"gpmB" ,"PGAM, gpmA","sseA" ,"fbaB" ,"ftr","hdrD" ,"metB", "metX" ))
+
+lo = floor(min(df_fig_dunn_sub$value))
+up = ceiling(max(df_fig_dunn_sub$value))
+mid = 0#(lo + up)/2
+fig_dunn_heat_arch = df_fig_dunn_sub%>%
+  ggplot(aes(x = gene ,y =group, fill = value)) + 
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white", 
+                       na.value = "white", midpoint = mid, limits = c(-6, 6),
+                       name = NULL )+
+ # geom_text(aes(gene, group, label = value), color = "black", size = 4) +
+  labs(x = NULL, y = NULL, title = "Log fold changes as compared to control") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle(" Archaea heated bay surface compared to depth")+
+  guides(x =  guide_axis(angle = 90))
+fig_dunn_heat_arch
+```
+
+```{r control - Archaea - Picrust - ANCOMBC2}
+#Subset heated bay
+
+metadata.con <-  read.csv("amplicon.seq/archaea/Archaea_meta_data_long_format_for_R_updated_excel.csv",stringsAsFactors = FALSE, header=TRUE)%>% 
+ # filter(!sample %in% "B22-24" )%>% 
+  filter(!bay %in% "heated")
+
+
+strat_table_arch_con <- read.delim("amplicon.seq/archaea/picrust/picrust2_out_pipeline/KO_metagenome_out/pred_metagenome_unstrat.tsv/pred_metagenome_unstrat.tsv",stringsAsFactors = FALSE, header=TRUE)%>%dplyr::select(
+  -P29893_1001_S1, -P29893_1002_S2, -P29893_1003_S3, -P29893_1004_S4, -P29893_1005_S5, -P29893_1006_S6, -P29893_1007_S7, -P29893_1008_S8, -P29893_1009_S9, -P29893_1010_S10, -P29893_1011_S11, -P29893_1012_S12, -P29893_1013_S13, -P29893_1014_S14, -P29893_1015_S15, -P29893_1016_S16, -P29893_1017_S17, -P29893_1018_S18, -P29893_1019_S19,-P29893_1020_S20 ,-P29893_1021_S21,-P29893_1022_S22, -P29893_1023_S23, -P29893_1024_S24, -P29893_1025_S25, -P29893_1026_S26, -P29893_1027_S27, -P29893_1028_S28, -P29893_1029_S29, -P29893_1030_S30, -P29893_1031_S31, -P29893_1032_S32, -P29893_1033_S33, -P29893_1034_S34, -P29893_1083_S83, -P29893_1084_S84, -P29893_1085_S85, -P29893_1086_S86, -P29893_1087_S87, -P29893_1088_S88, -P29893_1089_S89, -P29893_1090_S90, -P29893_1091_S91, -P29893_1092_S92, -P29893_1093_S93, -P29893_1094_S94)%>% remove_rownames() %>% 
+  column_to_rownames(var = "function.")
+
+
+```
+
+```{r DA analysis - Control bay - Archaea - ANCOMBC2}
+#Make phyloseq object, read more: https://codeocean.com/capsule/0588632/tree/v1
+
+meta_ancom <- metadata.con %>%  remove_rownames() %>% 
+  column_to_rownames(var = "sample_ID")
+
+# ANCOM-BC2 (SS Filter)
+OTU=otu_table(strat_table_arch_con, taxa_are_rows = TRUE)
+META = sample_data(meta_ancom)
+phyl_obj <- phyloseq(OTU, META)
+
+sample_data(phyl_obj)$depth <- as.factor(sample_data(phyl_obj)$depth)
+sample_data(phyl_obj)$depth<- relevel(sample_data(phyl_obj)$depth, "0-1cm")
+
+output = ancombc2(data = phyl_obj, assay_name = "relab",
+                  fix_formula = "depth", rand_formula = NULL,
+                  p_adj_method = "holm", pseudo_sens = TRUE,
+                  prv_cut = 0.10, lib_cut = 1000, s0_perc = 0.05,
+                  group = "depth", struc_zero = TRUE, neg_lb = TRUE,
+                  alpha = 0.05, n_cl = 2, verbose = TRUE,
+                  global = TRUE, pairwise = TRUE, 
+                  dunnet = TRUE, trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, 
+                                      verbose = TRUE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = lme4::lmerControl(), 
+                  mdfdr_control =  list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+                                       node = list(2),
+                                       solver = "ECOS",
+                                       B = 10))
+
+res_table <- as.data.frame(output$res)
+#write.csv(res_table, "ANCOMBC2_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_pair = as.data.frame(output$res_pair)
+#write.csv(res_pair, "ANCOMBC2_res_pair_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_global = as.data.frame(output$res_global)
+#write.csv(res_global, "ANCOMBC2_res_global_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_dunn = as.data.frame(output$res_dunn)
+write.csv(res_dunn, "ANCOMBC2_res_dunn_output_controlbay_Archaea_.csv")
+
+```
+
+```{r ANCOMBC2 DUnnets Test - Control Bay- Archaea- ANCOMBC2}
+res_dunn <- read.csv("ANCOMBC2_res_dunn_output_controlbay_Archaea_.csv",stringsAsFactors = FALSE, header=TRUE)
+
+
+
+
+
+#Figure for DUNN - multiple comparison
+df_fig_dunn = as.data.frame(res_dunn) %>%
+    dplyr::filter(`diff_depth1.2cm`== 1 | 
+                    `diff_depth5.6cm` == 1 |
+                   `diff_depth8.10cm` == 1 | 
+                    `diff_depth15.17cm` == 1|
+                    `diff_depth22.24cm` == 1) %>%
+    mutate(`lfc_depth1-2cm` = ifelse(`diff_depth1.2cm` == 1, 
+                             `lfc_depth1.2cm`, 0),
+           `lfc_depth5-6cm` = ifelse(`diff_depth5.6cm` == 1, 
+                                   `lfc_depth5.6cm`, 0),
+           `lfc_depth8-10cm` = ifelse(`diff_depth8.10cm` == 1, 
+                                   `lfc_depth8.10cm`, 0),
+           `lfc_depth15-17cm` = ifelse(`diff_depth15.17cm` == 1, 
+                                   `lfc_depth15.17cm`, 0),
+           `lfc_depth22-24cm` = ifelse(`diff_depth22.24cm` == 1, 
+                                   `lfc_depth22.24cm`, 0)) %>%
+    transmute(taxon, 
+              `1-2cm vs. 0-1cm` = round(`lfc_depth1-2cm`, 2), 
+              `5-6cm vs. 0-1cm` = round(`lfc_depth5-6cm`, 2),
+              `8-10cm vs. 0-1cm` = round(`lfc_depth8-10cm`, 2),
+              `15-17cm vs. 0-1cm` = round(`lfc_depth15-17cm`, 2),
+              `22-24cm vs. 0-1cm` = round(`lfc_depth22-24cm`, 2) )%>%
+    pivot_longer(cols = `1-2cm vs. 0-1cm`:`5-6cm vs. 0-1cm`:`8-10cm vs. 0-1cm`:`15-17cm vs. 0-1cm`:`22-24cm vs. 0-1cm`, 
+                 names_to = "group", values_to = "value") %>%
+    arrange(taxon)
+
+df_fig_dunn$group<- factor(df_fig_dunn$group,levels=c("1-2cm vs. 0-1cm",
+                    "5-6cm vs. 0-1cm" ,
+                   "8-10cm vs. 0-1cm",
+                    "15-17cm vs. 0-1cm",
+                   "22-24cm vs. 0-1cm"))
+  
+#Filter 0 Values
+#df_fig_dunn <-df_fig_dunn %>% filter(!value == "0")
+
+#Rename taxon to KO
+df_fig_dunn <- df_fig_dunn%>%dplyr::rename(KO = taxon) 
+
+#Upload KO groups
+KO_tab<-  read.delim("../Master_student_shahinez/ko00001_ed.txt")
+df_fig_dunn <- df_fig_dunn %>% inner_join( KO_tab, by="KO", relationship = "many-to-many")
+df_fig_dunn$gene= str_split_fixed(df_fig_dunn$gene_info,";",2)[,1]
+
+df_fig_dunn_sub <- df_fig_dunn %>% filter(Highest %in% "09100 Metabolism") %>% filter(Secondhighest %in% "09102 Energy metabolism")%>%filter(!Thirdhighest %in% c("00190 Oxidative phosphorylation [PATH:ko00190]", "00710 Carbon fixation in photosynthetic organisms [PATH:ko00710]", "00720 Carbon fixation pathways in prokaryotes [PATH:ko00720]","00195 Photosynthesis [PATH:ko00195]","00196 Photosynthesis - antenna proteins [PATH:ko00196]" ))
+
+
+
+
+df_fig_dunn_sub$group<- factor(df_fig_dunn_sub$group,levels=c("22-24cm vs. 0-1cm", "15-17cm vs. 0-1cm", "8-10cm vs. 0-1cm","5-6cm vs. 0-1cm" ,
+"1-2cm vs. 0-1cm"))
+
+df_fig_dunn_sub$gene <- factor(df_fig_dunn_sub$gene, levels=c("ACSS1_2, acs","apgM", "cofC, fbiD","cofD","cofE, fbiB","cofH","fbiC","fbiB","fwdA, fmdA","fwdB, fmdB","fwdD, fmdD","fwdF, fmdF", "fwdE, fmdE","fwdC, fmdC","glyA, SHMT", "K01622" ,"K16306", 
+"mtrA","mtrH","mttC","pmoA-amoA","pmoB-amoB","pmoC-amoC", "serA, PHGDH" ,"serB, PSPH" ,"cdhB", "cdhC","cdhD, acsD","cdhE, acsC", "fae-hps" ,"fdoG, fdhF, fdwA","hps-phi" ,"mer" ,"mfnA, adc" ,"mvhA, vhuA, vhcA", "mvhG, vhuG, vhcG" ,"ppc" ,"mdh" ,
+
+"cysC", "cysH", "cysK", "cysQ, MET22, BPNT1","sat, met3" ,"sir" ,"sqr" ,
+
+"nirK",
+
+"ENO, eno","glnA, GLUL" ,"gpmB" ,"PGAM, gpmA","TST, MPST, sseA" ,"fbaB" ,"ftr","hdrD" ,"metB", "metX" ))
+
+lo = floor(min(df_fig_dunn_sub$value))
+up = ceiling(max(df_fig_dunn_sub$value))
+mid = 0#(lo + up)/2
+fig_dunn_con_arch = df_fig_dunn_sub%>%
+  ggplot(aes(x = gene ,y =group, fill = value)) + 
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white", 
+                       na.value = "white", midpoint = mid, limit =  c(-6, 6),
+                       name = NULL) +
+# geom_text(aes(gene, group, label = value), color = "black", size = 4) +
+  labs(x = NULL, y = NULL, title = "Log fold changes as compared to control") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle(" Archaea control bay surface compared to depth")+
+  guides(x =  guide_axis(angle = 90))
+fig_dunn_con_arch
+```
+
+#Heated bay - Bacteria
+#only selected energy metabolism due to high annotation of potential functions
+
+```{r heated bay - bacteria}
+metadata.heat.bac <-  read.csv("amplicon.seq/bacteria/Bacteria_meta_data_long_format_for_R_new_excel.csv",stringsAsFactors = FALSE, header=TRUE)%>% 
+ # filter(!sample %in% "B22-24" )%>% 
+  filter(bay %in% "heated")
+
+list_heat <- metadata.heat.bac %>% dplyr::select(name)
+
+strat_table_bac.heat <- read.delim("amplicon.seq/bacteria/picrust/picrust2_out_pipeline/KO_metagenome_out/pred_metagenome_unstrat.tsv/pred_metagenome_unstrat.tsv",stringsAsFactors = FALSE, header=TRUE)%>%dplyr::select('function.',P29892_1002_S2,P29892_1001_S1,P29892_1004_S4,				P29892_1003_S3,				P29892_1006_S6,				P29892_1005_S5,				P29892_1008_S8,				P29892_1007_S7,				P29892_1010_S10,				P29892_1009_S9,P29892_1012_S12,				P29892_1011_S11,				P29892_1014_S14,				P29892_1013_S13,				P29892_1016_S16,				P29892_1015_S15,				P29892_1018_S18,				P29892_1017_S17,				P29892_1020_S20,				P29892_1019_S19,P29892_1022_S22,				P29892_1021_S21,				P29892_1024_S24,				P29892_1023_S23,				P29892_1026_S26,				P29892_1025_S25,				P29892_1028_S28,				P29892_1027_S27,P29892_1030_S30,				
+P29892_1029_S29,				P29892_1032_S32,				P29892_1031_S31,				P29892_1034_S34,				P29892_1033_S33,			P29892_1084_S84,				P29892_1083_S83,				P29892_1086_S86,				P29892_1085_S85,P29892_1088_S88,				P29892_1087_S87,				P29892_1090_S90,				P29892_1089_S89,				P29892_1092_S92,				P29892_1091_S91,				P29892_1094_S94,				P29892_1093_S93)%>% remove_rownames() %>% 
+  column_to_rownames(var = "function.")
+
+```
+
+```{r DA analysis - heated bay - Bacteria - ANCOMBC2}
+#Make phyloseq object, read more: https://codeocean.com/capsule/0588632/tree/v1
+
+meta_ancom <- metadata.heat.bac %>%  filter(!sample %in% "B22-24")%>%
+remove_rownames() %>% column_to_rownames(var = "name")
+
+# ANCOM-BC2 (SS Filter)
+OTU=otu_table(strat_table_bac.heat, taxa_are_rows = TRUE)
+META = sample_data(meta_ancom)
+phyl_obj <- phyloseq(OTU, META)
+
+sample_data(phyl_obj)$depth <- as.factor(sample_data(phyl_obj)$depth)
+sample_data(phyl_obj)$depth<- relevel(sample_data(phyl_obj)$depth, "0-1cm")
+
+output = ancombc2(data = phyl_obj, assay_name = "relab",
+                  fix_formula = "depth", rand_formula = NULL,
+                  p_adj_method = "holm", pseudo_sens = TRUE,
+                  prv_cut = 0.10, lib_cut = 1000, s0_perc = 0.05,
+                  group = "depth", struc_zero = TRUE, neg_lb = TRUE,
+                  alpha = 0.05, n_cl = 2, verbose = TRUE,
+                  global = TRUE, pairwise = TRUE, 
+                  dunnet = TRUE, trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, 
+                                      verbose = TRUE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = lme4::lmerControl(), 
+                  mdfdr_control =  list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+                                       node = list(2),
+                                       solver = "ECOS",
+                                       B = 10))
+
+res_table <- as.data.frame(output$res)
+#write.csv(res_table, "ANCOMBC2_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_pair = as.data.frame(output$res_pair)
+#write.csv(res_pair, "ANCOMBC2_res_pair_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_global = as.data.frame(output$res_global)
+#write.csv(res_global, "ANCOMBC2_res_global_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_dunn = as.data.frame(output$res_dunn)
+write.csv(res_dunn, "ANCOMBC2_res_dunn_output_heatedbay_bacteria_.csv")
+
+```
+
+```{r ANCOMBC2 DUNNETS TEST - Heated bay - Bacteria }
+res_dunn <- read.csv("ANCOMBC2_res_dunn_output_heatedbay_bacteria_.csv",stringsAsFactors = FALSE, header=TRUE)
+
+
+
+#Figure for DUNN - multiple comparison
+df_fig_dunn = as.data.frame(res_dunn) %>%
+    dplyr::filter(`diff_depth1.2cm`== 1 | 
+                    `diff_depth5.6cm` == 1 |
+                   `diff_depth8.10cm` == 1 | 
+                    `diff_depth15.17cm` == 1|
+                    `diff_depth22.24cm` == 1) %>%
+    mutate(`lfc_depth1-2cm` = ifelse(`diff_depth1.2cm` == 1, 
+                             `lfc_depth1.2cm`, 0),
+           `lfc_depth5-6cm` = ifelse(`diff_depth5.6cm` == 1, 
+                                   `lfc_depth5.6cm`, 0),
+           `lfc_depth8-10cm` = ifelse(`diff_depth8.10cm` == 1, 
+                                   `lfc_depth8.10cm`, 0),
+           `lfc_depth15-17cm` = ifelse(`diff_depth15.17cm` == 1, 
+                                   `lfc_depth15.17cm`, 0),
+           `lfc_depth22-24cm` = ifelse(`diff_depth22.24cm` == 1, 
+                                   `lfc_depth22.24cm`, 0)) %>%
+    transmute(taxon, 
+              `1-2cm vs. 0-1cm` = round(`lfc_depth1-2cm`, 2), 
+              `5-6cm vs. 0-1cm` = round(`lfc_depth5-6cm`, 2),
+              `8-10cm vs. 0-1cm` = round(`lfc_depth8-10cm`, 2),
+              `15-17cm vs. 0-1cm` = round(`lfc_depth15-17cm`, 2),
+              `22-24cm vs. 0-1cm` = round(`lfc_depth22-24cm`, 2) )%>%
+    pivot_longer(cols = `1-2cm vs. 0-1cm`:`5-6cm vs. 0-1cm`:`8-10cm vs. 0-1cm`:`15-17cm vs. 0-1cm`:`22-24cm vs. 0-1cm`, 
+                 names_to = "group", values_to = "value") %>%
+    arrange(taxon)
+
+df_fig_dunn$group<- factor(df_fig_dunn$group,levels=c("1-2cm vs. 0-1cm",
+                    "5-6cm vs. 0-1cm" ,
+                   "8-10cm vs. 0-1cm",
+                    "15-17cm vs. 0-1cm",
+                   "22-24cm vs. 0-1cm"))
+  
+#Filter 0 Values
+#df_fig_dunn <-df_fig_dunn %>% filter(!value == "0")
+
+#Rename taxon to KO
+df_fig_dunn <- df_fig_dunn%>%dplyr::rename(KO = taxon) 
+
+#Upload KO groups
+
+KO_tab<-  read.delim("../Master_student_shahinez/ko00001_ed.txt")
+
+
+df_fig_dunn <- df_fig_dunn %>% inner_join( KO_tab, by="KO", relationship = "many-to-many")
+df_fig_dunn$gene= str_split_fixed(df_fig_dunn$gene_info,";",2)[,1]
+
+df_fig_dunn_sub <- df_fig_dunn %>% filter(Highest %in% "09100 Metabolism") %>% filter(Secondhighest %in% "09102 Energy metabolism")%>%filter(!Thirdhighest %in% c("00190 Oxidative phosphorylation [PATH:ko00190]", "00710 Carbon fixation in photosynthetic organisms [PATH:ko00710]", "00720 Carbon fixation pathways in prokaryotes [PATH:ko00720]","00195 Photosynthesis [PATH:ko00195]","00196 Photosynthesis - antenna proteins [PATH:ko00196]" ))%>%filter(gene %in% c("hprA", "fdhA", "cdhA", "cdhC","cdhB", "mtd", "mcrA", "mcrB", "mcrG", "mtrA", "mtrB", "mtrC", "mtrD", "mtrE", "mtrF", "mtrG", "mtrH", "mcrC", "mcrD", "mtaB", "hdrD", "hdrE", "mtkB", "fdhB",
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "nasB", "nirD", "nirA", "narB", "narG, narZ, nxrA", "nasA", "narI, narV", "nosZ", "napA", "napB", "norB", 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "sir", "dmsA", "dmsB", "phsA, psrA", "soxA", "soxX", "soxB", "soxY", "soxZ", "fccB", "fccA"))
+
+
+df_fig_dunn_sub$gene <- factor(df_fig_dunn_sub$gene, levels=c("hprA","fdhA","fdhB","cdhA", "cdhC","cdhB","mtd","mcrA", "mcrB", "mcrG", "mcrC", "mcrD","mtrA", "mtrB", "mtrC", "mtrD", "mtrE", "mtrF", "mtrG", "mtrH","mtaB", "hdrD", "hdrE", "mtkB","nasB", "nirD", "nirA", "narB", "narG, narZ, nxrA", "nasA", "narI, narV", "nosZ", "napA", "napB", "norB","sir", "dmsA", "dmsB", "phsA, psrA", "soxA", "soxX", "soxB", "soxY", "soxZ", "fccB", "fccA"  ))
+
+
+
+df_fig_dunn_sub$group<- factor(df_fig_dunn_sub$group,levels=c("22-24cm vs. 0-1cm", "15-17cm vs. 0-1cm", "8-10cm vs. 0-1cm","5-6cm vs. 0-1cm" ,
+"1-2cm vs. 0-1cm"))
+
+
+lo = floor(min(df_fig_dunn_sub$value))
+up = ceiling(max(df_fig_dunn_sub$value))
+mid = 0#(lo + up)/2
+fig_dunn_heat_bac = df_fig_dunn_sub%>%
+  ggplot(aes(x = gene, y = group, fill = value)) + 
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4",mid = "white", 
+                   na.value = "white", midpoint = mid, limit =  c(-6, 6),
+                 name = NULL) +
+
+#  geom_text(aes(gene, group, label = value), color = "black", size = 4) +
+  labs(x = NULL, y = NULL, title = "Log fold changes as compared to control") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle(" Bacteria heated bay surface compared to depth")+
+  guides(x =  guide_axis(angle = 90))+
+   annotate("rect", xmin = 0.5, xmax = 24.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)+
+  annotate("rect", xmin = 24.5, xmax = 35.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)+
+  annotate("rect", xmin = 35.5, xmax = 46.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)
+  
+fig_dunn_heat_bac
+
+
+
+```
+
+```{r control bay - bacteria}
+metadata.con.bac <-  read.csv("amplicon.seq/bacteria/Bacteria_meta_data_long_format_for_R_new_excel.csv",stringsAsFactors = FALSE, header=TRUE)%>% 
+ # filter(!sample %in% "B22-24" )%>% 
+  filter(bay %in% "control")
+
+list_con <- metadata.con.bac %>% dplyr::select(name)
+
+strat_table_bac.con <- read.delim("amplicon.seq/bacteria/picrust/picrust2_out_pipeline/KO_metagenome_out/pred_metagenome_unstrat.tsv/pred_metagenome_unstrat.tsv",stringsAsFactors = FALSE, header=TRUE)%>%dplyr::select('function.',	P29892_1036_S36,P29892_1035_S35,P29892_1038_S38,P29892_1037_S37,P29892_1040_S40,P29892_1039_S39,P29892_1042_S42,P29892_1041_S41,P29892_1044_S44,P29892_1043_S43,P29892_1046_S46,P29892_1045_S45,P29892_1048_S48,P29892_1047_S47,P29892_1050_S50,P29892_1049_S49,P29892_1052_S52,P29892_1051_S51,P29892_1054_S54,P29892_1053_S53,P29892_1056_S56,P29892_1055_S55,P29892_1058_S58,P29892_1057_S57,P29892_1060_S60,P29892_1059_S59,P29892_1062_S62,P29892_1061_S61,P29892_1064_S64,P29892_1063_S63,P29892_1066_S66,P29892_1065_S65,P29892_1068_S68,P29892_1067_S67,P29892_1070_S70,P29892_1069_S69,P29892_1072_S72,P29892_1071_S71,P29892_1074_S74,P29892_1073_S73,P29892_1076_S76,P29892_1075_S75,P29892_1078_S78,P29892_1077_S77,P29892_1080_S80,P29892_1079_S79,P29892_1082_S82,P29892_1081_S81)%>% remove_rownames() %>% 
+  column_to_rownames(var = "function.")
+```
+
+```{r DA analysis - control bay - bacteria - ANCOMBC2}
+#Make phyloseq object, read more: https://codeocean.com/capsule/0588632/tree/v1
+
+meta_ancom <- metadata.con.bac %>%  filter(!sample %in% "B22-24")%>%
+remove_rownames() %>% column_to_rownames(var = "name")
+
+# ANCOM-BC2 (SS Filter)
+OTU=otu_table(strat_table_bac.con, taxa_are_rows = TRUE)
+META = sample_data(meta_ancom)
+phyl_obj <- phyloseq(OTU, META)
+
+sample_data(phyl_obj)$depth <- as.factor(sample_data(phyl_obj)$depth)
+sample_data(phyl_obj)$depth<- relevel(sample_data(phyl_obj)$depth, "0-1cm")
+
+output = ancombc2(data = phyl_obj, assay_name = "relab",
+                  fix_formula = "depth", rand_formula = NULL,
+                  p_adj_method = "holm", pseudo_sens = TRUE,
+                  prv_cut = 0.10, lib_cut = 1000, s0_perc = 0.05,
+                  group = "depth", struc_zero = TRUE, neg_lb = TRUE,
+                  alpha = 0.05, n_cl = 2, verbose = TRUE,
+                  global = TRUE, pairwise = TRUE, 
+                  dunnet = TRUE, trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, 
+                                      verbose = TRUE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = lme4::lmerControl(), 
+                  mdfdr_control =  list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+                                       node = list(2),
+                                       solver = "ECOS",
+                                       B = 10))
+
+res_table <- as.data.frame(output$res)
+#write.csv(res_table, "ANCOMBC2_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_pair = as.data.frame(output$res_pair)
+#write.csv(res_pair, "ANCOMBC2_res_pair_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_global = as.data.frame(output$res_global)
+#write.csv(res_global, "ANCOMBC2_res_global_output_User.ID_SAR_group_Family_Taxa_Level_reference_control0.csv")
+
+res_dunn = as.data.frame(output$res_dunn)
+write.csv(res_dunn, "ANCOMBC2_res_dunn_output_controlbay_bacteria_.csv")
+```
+
+```{r ANCOMBC DUNNETS TEST CONTROL BAY BACTERIA}
+res_dunn <- read.csv("ANCOMBC2_res_dunn_output_controlbay_bacteria_.csv",stringsAsFactors = FALSE, header=TRUE)
+
+
+#Figure for DUNN - multiple comparison
+df_fig_dunn = as.data.frame(res_dunn) %>%
+    dplyr::filter(`diff_depth1.2cm`== 1 | 
+                    `diff_depth5.6cm` == 1 |
+                   `diff_depth8.10cm` == 1 | 
+                    `diff_depth15.17cm` == 1|
+                    `diff_depth22.24cm` == 1) %>%
+    mutate(`lfc_depth1-2cm` = ifelse(`diff_depth1.2cm` == 1, 
+                             `lfc_depth1.2cm`, 0),
+           `lfc_depth5-6cm` = ifelse(`diff_depth5.6cm` == 1, 
+                                   `lfc_depth5.6cm`, 0),
+           `lfc_depth8-10cm` = ifelse(`diff_depth8.10cm` == 1, 
+                                   `lfc_depth8.10cm`, 0),
+           `lfc_depth15-17cm` = ifelse(`diff_depth15.17cm` == 1, 
+                                   `lfc_depth15.17cm`, 0),
+           `lfc_depth22-24cm` = ifelse(`diff_depth22.24cm` == 1, 
+                                   `lfc_depth22.24cm`, 0)) %>%
+    transmute(taxon, 
+              `1-2cm vs. 0-1cm` = round(`lfc_depth1-2cm`, 2), 
+              `5-6cm vs. 0-1cm` = round(`lfc_depth5-6cm`, 2),
+              `8-10cm vs. 0-1cm` = round(`lfc_depth8-10cm`, 2),
+              `15-17cm vs. 0-1cm` = round(`lfc_depth15-17cm`, 2),
+              `22-24cm vs. 0-1cm` = round(`lfc_depth22-24cm`, 2) )%>%
+    pivot_longer(cols = `1-2cm vs. 0-1cm`:`5-6cm vs. 0-1cm`:`8-10cm vs. 0-1cm`:`15-17cm vs. 0-1cm`:`22-24cm vs. 0-1cm`, 
+                 names_to = "group", values_to = "value") %>%
+    arrange(taxon)
+
+df_fig_dunn$group<- factor(df_fig_dunn$group,levels=c("1-2cm vs. 0-1cm",
+                    "5-6cm vs. 0-1cm" ,
+                   "8-10cm vs. 0-1cm",
+                    "15-17cm vs. 0-1cm",
+                   "22-24cm vs. 0-1cm"))
+  
+#Filter 0 Values
+#df_fig_dunn <-df_fig_dunn %>% filter(!value == "0")
+
+#Rename taxon to KO
+df_fig_dunn <- df_fig_dunn%>%dplyr::rename(KO = taxon) 
+
+#Upload KO groups
+
+KO_tab<-  read.delim("../Master_student_shahinez/ko00001_ed.txt")
+
+
+df_fig_dunn <- df_fig_dunn %>% inner_join( KO_tab, by="KO", relationship = "many-to-many")
+
+df_fig_dunn$gene= str_split_fixed(df_fig_dunn$gene_info,";",2)[,1]
+
+df_fig_dunn_sub <- df_fig_dunn %>% filter(Highest %in% "09100 Metabolism") %>% filter(Secondhighest %in% "09102 Energy metabolism")%>%filter(!Thirdhighest %in% c("00190 Oxidative phosphorylation [PATH:ko00190]", "00710 Carbon fixation in photosynthetic organisms [PATH:ko00710]", "00720 Carbon fixation pathways in prokaryotes [PATH:ko00720]","00195 Photosynthesis [PATH:ko00195]","00196 Photosynthesis - antenna proteins [PATH:ko00196]" ))%>%filter(gene %in% c("hprA", "fdhA", "cdhA", "cdhC","cdhB", "mtd", "mcrA", "mcrB", "mcrG", "mtrA", "mtrB", "mtrC", "mtrD", "mtrE", "mtrF", "mtrG", "mtrH", "mcrC", "mcrD", "mtaB", "hdrD", "hdrE", "mtkB", "fdhB",
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "nasB", "nirD", "nirA", "narB", "narG, narZ, nxrA", "nasA", "narI, narV", "nosZ", "napA", "napB", "norB", 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "sir", "dmsA", "dmsB", "phsA, psrA", "soxA", "soxX", "soxB", "soxY", "soxZ", "fccB", "fccA"))
+
+
+df_fig_dunn_sub$gene <- factor(df_fig_dunn_sub$gene, levels=c("hprA","fdhA","fdhB","cdhA", "cdhC","cdhB","mtd","mcrA", "mcrB", "mcrG", "mcrC", "mcrD","mtrA", "mtrB", "mtrC", "mtrD", "mtrE", "mtrF", "mtrG", "mtrH","mtaB", "hdrD", "hdrE", "mtkB","nasB", "nirD", "nirA", "narB", "narG, narZ, nxrA", "nasA", "narI, narV", "nosZ", "napA", "napB", "norB","sir", "dmsA", "dmsB", "phsA, psrA", "soxA", "soxX", "soxB", "soxY", "soxZ", "fccB", "fccA"  ))
+
+
+
+df_fig_dunn_sub$group<- factor(df_fig_dunn_sub$group,levels=c("22-24cm vs. 0-1cm", "15-17cm vs. 0-1cm", "8-10cm vs. 0-1cm","5-6cm vs. 0-1cm" ,
+"1-2cm vs. 0-1cm"))
+
+
+lo = floor(min(df_fig_dunn_sub$value))
+up = ceiling(max(df_fig_dunn_sub$value))
+mid = 0#(lo + up)/2
+fig_dunn_con_bac = df_fig_dunn_sub%>%
+  ggplot(aes(x = gene, y = group, fill = value)) + 
+  geom_tile(color = "black") +
+  scale_fill_gradient2(low = "darkolivegreen3", high = "indianred4", mid = "white", 
+                       na.value = "white", midpoint = mid, limit = c(-6,6),
+                       name = NULL) +
+ # geom_text(aes(gene, group, label = value), color = "black", size = 4) +
+  labs(x = NULL, y = NULL, title = "Log fold changes as compared to control") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))+ggtitle(" Bacteria control bay surface compared to depth")+
+    guides(x =  guide_axis(angle = 90))+
+   annotate("rect", xmin = 0.5, xmax = 21.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)+
+  annotate("rect", xmin = 21.5, xmax = 31.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)+
+  annotate("rect", xmin = 31.5, xmax = 40.5, ymin = 0.5, ymax = 5.5,
+             alpha = 0, color= "black", linetype="solid", size=0.8)
+fig_dunn_con_bac
+
+
+
+```
+
+```{r combine}
+
+#bacteria
+bac <-ggarrange(fig_dunn_heat_bac,fig_dunn_con_bac, nrow=2, labels = c("A", "B"),common.legend = TRUE , legend= "right")
+arch <- ggarrange(fig_dunn_heat_arch, fig_dunn_con_arch, nrow=2, labels = c("C","D"), legend="right", common.legend = T)
+
+ggarrange(bac, arch, ncol=2, common.legend = T, legend="right")
+```
+
